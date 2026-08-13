@@ -13,6 +13,8 @@ pub(crate) struct OverlayRender {
     pub(crate) navigator_rows: Vec<(Rect, usize)>,
     pub(crate) worktree_search: Rect,
     pub(crate) worktree_rows: Vec<(Rect, usize)>,
+    pub(crate) worktree_branch: Rect,
+    pub(crate) worktree_base: Rect,
     pub(crate) help_popup: Rect,
     pub(crate) help_scrollbar: Rect,
     pub(crate) help_scroll_metrics: Option<crate::pane::ScrollMetrics>,

@@ -983,6 +983,97 @@ fn worktree_create_previews_the_endpoint_owned_checkout_path() {
 }
 
 #[test]
+fn linked_worktree_create_uses_parent_workspace_and_current_branch_base() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let mut projected = snapshot();
+    projected.workspaces[0].worktree = Some(ClientShellWorktree {
+        key: "repo-key".into(),
+        label: "repo".into(),
+        is_linked_worktree: false,
+    });
+    let mut child = projected.workspaces[0].clone();
+    child.workspace_id = "ws_2".into();
+    child.active_tab_id = "tab_2".into();
+    child.number = 2;
+    child.label = "repo-feature".into();
+    child.branch = Some("feature/current".into());
+    child.worktree = Some(ClientShellWorktree {
+        key: "repo-key".into(),
+        label: "repo".into(),
+        is_linked_worktree: true,
+    });
+    child.focused = false;
+    projected.workspaces.push(child);
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+
+    state.open_workspace_context_menu("ws_2".into(), 1, 1);
+    let Some(ClientShellOverlay::ContextMenu(menu)) = &state.overlay else {
+        panic!("linked workspace should have a context menu");
+    };
+    let labels = menu
+        .items()
+        .into_iter()
+        .map(|item| item.label)
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"New worktree"));
+    assert!(labels.contains(&"Open worktree..."));
+
+    state.overlay = None;
+    let mut prepare = ClientShellInput::default();
+    state.begin_worktree_action_for(
+        crate::input::KeybindAction::NewWorktree,
+        "ws_2".into(),
+        &mut prepare,
+    );
+    let [ClientShellAction::Endpoint { request, .. }] = &prepare.actions[..] else {
+        panic!("linked worktree should prepare through worktree.list");
+    };
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::WorktreeList(params)
+            if params.workspace_id.as_deref() == Some("ws_2")
+    ));
+
+    let result = crate::api::schema::ResponseResult::WorktreeList {
+        source: crate::api::schema::WorktreeSourceInfo {
+            repo_key: "repo-key".into(),
+            repo_name: "repo".into(),
+            repo_root: "/repo".into(),
+            source_checkout_path: "/repo".into(),
+            source_workspace_id: Some("ws_1".into()),
+        },
+        worktrees: vec![crate::api::schema::WorktreeInfo {
+            path: "/repo-feature".into(),
+            branch: Some("feature/current".into()),
+            is_bare: false,
+            is_detached: false,
+            is_prunable: false,
+            is_linked_worktree: true,
+            open_workspace_id: Some("ws_2".into()),
+            label: "repo-feature".into(),
+        }],
+    };
+    state.handle_endpoint_result("boot-1", &request.id, Ok(result));
+    assert!(matches!(
+        &state.overlay,
+        Some(ClientShellOverlay::WorktreeCreate(create))
+            if create.source_workspace_id == "ws_1" && create.base == "feature/current"
+    ));
+
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("linked worktree create should use endpoint API");
+    };
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::WorktreeCreate(params)
+            if params.workspace_id.as_deref() == Some("ws_1")
+                && params.base.as_deref() == Some("feature/current")
+    ));
+}
+
+#[test]
 fn unavailable_worktree_create_does_not_wedge_the_overlay() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));

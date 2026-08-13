@@ -1369,7 +1369,25 @@ impl ClientShellState {
                     outcome.repaint = true;
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
-                    if super::contains(self.hits.overlay_cancel, point) {
+                    if super::contains(self.hits.worktree_branch, point) {
+                        if let Some(ClientShellOverlay::WorktreeCreate(create)) =
+                            self.overlay.as_mut()
+                        {
+                            if !create.creating {
+                                create.base_focused = false;
+                                outcome.repaint = true;
+                            }
+                        }
+                    } else if super::contains(self.hits.worktree_base, point) {
+                        if let Some(ClientShellOverlay::WorktreeCreate(create)) =
+                            self.overlay.as_mut()
+                        {
+                            if !create.creating {
+                                create.base_focused = true;
+                                outcome.repaint = true;
+                            }
+                        }
+                    } else if super::contains(self.hits.overlay_cancel, point) {
                         let busy =
                             matches!(
                                 self.overlay,
