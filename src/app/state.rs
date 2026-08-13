@@ -663,6 +663,9 @@ pub struct WorktreeCreateState {
     pub repo_key: String,
     pub repo_name: String,
     pub branch: String,
+    pub base: String,
+    pub base_focused: bool,
+    pub base_replace_on_type: bool,
     pub checkout_path: std::path::PathBuf,
     pub error: Option<String>,
     pub creating: bool,
@@ -1237,7 +1240,13 @@ impl ContextMenuState {
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: true,
                 ..
-            } => vec!["Rename", "Close", "Delete worktree checkout..."],
+            } => vec![
+                "Rename",
+                "Close",
+                "New worktree",
+                "Open worktree...",
+                "Delete worktree checkout...",
+            ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: true,
@@ -2572,7 +2581,13 @@ mod tests {
 
         assert_eq!(
             menu.items(),
-            &["Rename", "Close", "Delete worktree checkout..."]
+            &[
+                "Rename",
+                "Close",
+                "New worktree",
+                "Open worktree...",
+                "Delete worktree checkout..."
+            ]
         );
     }
 
