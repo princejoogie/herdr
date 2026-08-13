@@ -24,6 +24,15 @@ impl ClientShellState {
     pub(super) fn insert_worktree_overlay_text(&mut self, text: &str) -> bool {
         match self.overlay.as_mut() {
             Some(ClientShellOverlay::WorktreeCreate(create)) if !create.creating => {
+                if create.base_focused {
+                    if create.base_replace_on_type {
+                        create.base.clear();
+                        create.base_replace_on_type = false;
+                    }
+                    create.base.push_str(text);
+                    create.error = None;
+                    return true;
+                }
                 if create.replace_on_type {
                     create.branch.clear();
                     create.replace_on_type = false;
@@ -65,15 +74,33 @@ impl ClientShellState {
                         outcome.repaint = true;
                     }
                     KeyCode::Enter => self.submit_worktree_create(outcome),
+                    KeyCode::Tab | KeyCode::BackTab if !creating => {
+                        if let Some(ClientShellOverlay::WorktreeCreate(create)) =
+                            self.overlay.as_mut()
+                        {
+                            create.base_focused = !create.base_focused;
+                        }
+                        outcome.repaint = true;
+                    }
                     KeyCode::Backspace if !creating => {
                         if let Some(ClientShellOverlay::WorktreeCreate(create)) =
                             self.overlay.as_mut()
                         {
-                            if create.replace_on_type {
-                                create.branch.clear();
-                                create.replace_on_type = false;
+                            if create.base_focused {
+                                if create.base_replace_on_type {
+                                    create.base.clear();
+                                    create.base_replace_on_type = false;
+                                } else {
+                                    create.base.pop();
+                                }
+                                create.error = None;
                             } else {
-                                create.branch.pop();
+                                if create.replace_on_type {
+                                    create.branch.clear();
+                                    create.replace_on_type = false;
+                                } else {
+                                    create.branch.pop();
+                                }
                             }
                         }
                         self.sync_worktree_create_path();
@@ -212,14 +239,6 @@ impl ClientShellState {
             .and_then(|workspace| workspace.worktree.as_ref())
             .is_some_and(|worktree| worktree.is_linked_worktree);
         let kind = match action {
-            KeybindAction::NewWorktree | KeybindAction::OpenWorktree if linked => {
-                self.endpoint_error = Some(
-                    "New and open worktree actions start from the repo parent workspace."
-                        .to_owned(),
-                );
-                outcome.repaint = true;
-                return;
-            }
             KeybindAction::NewWorktree => PendingEndpointKind::PrepareWorktreeCreate {
                 workspace_id: workspace_id.clone(),
             },
@@ -271,12 +290,19 @@ impl ClientShellState {
             return;
         }
         let branch = create.branch.trim().to_owned();
+        let base = create.base.trim().to_owned();
         if branch.is_empty() {
             create.error = Some("branch is required".to_owned());
             outcome.repaint = true;
             return;
         }
+        if base.is_empty() {
+            create.error = Some("base is required".to_owned());
+            outcome.repaint = true;
+            return;
+        }
         create.branch = branch.clone();
+        create.base = base.clone();
         create.replace_on_type = false;
         create.checkout_path =
             checkout_path_preview(&worktree_directory, &create.repo_name, &branch);
@@ -288,7 +314,7 @@ impl ClientShellState {
                 workspace_id: Some(workspace_id),
                 cwd: None,
                 branch: Some(branch),
-                base: Some("HEAD".to_owned()),
+                base: Some(base),
                 path: None,
                 label: None,
                 focus: true,
@@ -396,7 +422,7 @@ impl ClientShellState {
         match (kind, result) {
             (
                 PendingEndpointKind::PrepareWorktreeCreate { workspace_id },
-                Ok(ResponseResult::WorktreeList { source, .. }),
+                Ok(ResponseResult::WorktreeList { source, worktrees }),
             ) => {
                 let seed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -408,11 +434,20 @@ impl ClientShellState {
                 };
                 let checkout_path =
                     checkout_path_preview(&worktree_directory, &source.repo_name, &branch);
+                let base = worktrees
+                    .iter()
+                    .find(|entry| entry.open_workspace_id.as_deref() == Some(&workspace_id))
+                    .and_then(|entry| entry.branch.clone())
+                    .unwrap_or_else(|| "HEAD".to_owned());
+                let source_workspace_id = source.source_workspace_id.unwrap_or(workspace_id);
                 self.overlay = Some(ClientShellOverlay::WorktreeCreate(
                     ClientWorktreeCreateOverlay {
-                        source_workspace_id: workspace_id,
+                        source_workspace_id,
                         repo_name: source.repo_name,
                         branch,
+                        base,
+                        base_focused: false,
+                        base_replace_on_type: true,
                         checkout_path,
                         replace_on_type: true,
                         error: None,
@@ -423,7 +458,7 @@ impl ClientShellState {
             }
             (
                 PendingEndpointKind::PrepareWorktreeOpen { workspace_id },
-                Ok(ResponseResult::WorktreeList { worktrees, .. }),
+                Ok(ResponseResult::WorktreeList { source, worktrees }),
             ) => {
                 let entries = worktrees
                     .into_iter()
@@ -445,7 +480,7 @@ impl ClientShellState {
                 } else {
                     self.overlay = Some(ClientShellOverlay::WorktreeOpen(
                         ClientWorktreeOpenOverlay {
-                            source_workspace_id: workspace_id,
+                            source_workspace_id: source.source_workspace_id.unwrap_or(workspace_id),
                             entries,
                             selected: 0,
                             query: String::new(),

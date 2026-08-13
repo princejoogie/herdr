@@ -5,7 +5,7 @@ pub(super) fn render_worktree_create_overlay(
     create: &ClientWorktreeCreateOverlay,
     p: &Palette,
 ) -> Option<OverlayRender> {
-    let popup = popup(b.area, 68, 12)?;
+    let popup = popup(b.area, 68, 15)?;
     let inner = panel(b, popup, p.accent, p.panel_bg)?;
     put_text(
         b,
@@ -41,13 +41,31 @@ pub(super) fn render_worktree_create_overlay(
         inner.x,
         inner.y + 5,
         inner.width,
+        " base  tab to switch fields",
+        Style::default().fg(p.overlay0).bg(p.panel_bg),
+    );
+    let base_input = Rect::new(inner.x, inner.y + 6, inner.width, 1);
+    b.set_style(base_input, Style::default().fg(p.text).bg(p.surface0));
+    put_text(
+        b,
+        base_input.x,
+        base_input.y,
+        base_input.width,
+        &format!(" {}", create.base),
+        Style::default().fg(p.text).bg(p.surface0),
+    );
+    put_text(
+        b,
+        inner.x,
+        inner.y + 8,
+        inner.width,
         " checkout",
         Style::default().fg(p.overlay0).bg(p.panel_bg),
     );
     put_text(
         b,
         inner.x,
-        inner.y + 6,
+        inner.y + 9,
         inner.width,
         &format!(" {}", create.checkout_path),
         Style::default().fg(p.subtext0).bg(p.panel_bg),
@@ -56,7 +74,7 @@ pub(super) fn render_worktree_create_overlay(
         put_text(
             b,
             inner.x,
-            inner.y + 8,
+            inner.y + 11,
             inner.width,
             " creating…",
             Style::default().fg(p.accent).bg(p.panel_bg),
@@ -65,13 +83,13 @@ pub(super) fn render_worktree_create_overlay(
         put_text(
             b,
             inner.x,
-            inner.y + 8,
+            inner.y + 11,
             inner.width,
             &format!(" {error}"),
             Style::default().fg(p.red).bg(p.panel_bg),
         );
     }
-    let buttons = row(inner, &[20, 12], 2, 9);
+    let buttons = row(inner, &[20, 12], 2, 12);
     let [primary, cancel] = buttons.as_slice() else {
         return None;
     };
@@ -102,11 +120,20 @@ pub(super) fn render_worktree_create_overlay(
         navigator_rows: Vec::new(),
         worktree_search: Rect::default(),
         worktree_rows: Vec::new(),
-        cursor: (!create.creating).then(|| crate::protocol::CursorState {
-            x: (input.x + 1 + display_width(&create.branch)).min(input.right() - 1),
-            y: input.y,
-            visible: true,
-            shape: 0,
+        worktree_branch: input,
+        worktree_base: base_input,
+        cursor: (!create.creating).then(|| {
+            let (field, value) = if create.base_focused {
+                (base_input, create.base.as_str())
+            } else {
+                (input, create.branch.as_str())
+            };
+            crate::protocol::CursorState {
+                x: (field.x + 1 + display_width(value)).min(field.right() - 1),
+                y: field.y,
+                visible: true,
+                shape: 0,
+            }
         }),
         ..OverlayRender::default()
     })

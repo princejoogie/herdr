@@ -25,6 +25,8 @@ impl ClientContextMenuOverlay {
             } => vec![
                 item("Rename", Action::Rename),
                 item("Close", Action::Close),
+                item("New worktree", Action::NewWorktree),
+                item("Open worktree...", Action::OpenWorktree),
                 item("Delete worktree checkout...", Action::RemoveWorktree),
             ],
             ClientContextMenuTarget::Workspace {
