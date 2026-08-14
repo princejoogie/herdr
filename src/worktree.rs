@@ -1,6 +1,93 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone, Copy)]
+pub(crate) enum WorktreeHookPhase {
+    BeforeCreate,
+    AfterCreate,
+    BeforeRemove,
+    AfterRemove,
+}
+
+impl WorktreeHookPhase {
+    fn name(self) -> &'static str {
+        match self {
+            Self::BeforeCreate => "before_create",
+            Self::AfterCreate => "after_create",
+            Self::BeforeRemove => "before_remove",
+            Self::AfterRemove => "after_remove",
+        }
+    }
+}
+
+pub(crate) struct WorktreeHookContext<'a> {
+    pub path: &'a Path,
+    pub repo_root: &'a Path,
+    pub source_path: &'a Path,
+    pub branch: Option<&'a str>,
+}
+
+pub(crate) fn run_worktree_hooks(
+    hooks: &[crate::config::WorktreeHookConfig],
+    phase: WorktreeHookPhase,
+    cwd: &Path,
+    context: WorktreeHookContext<'_>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for hook in hooks {
+        let Some(program) = hook.command.first() else {
+            failures.push(format!("{}: command is empty", phase.name()));
+            continue;
+        };
+        let args = hook.command.iter().skip(1).cloned().collect::<Vec<_>>();
+        let mut command = crate::plugin_command::command_for_argv_in_dir(program, &args, cwd);
+        command
+            .env("HERDR_ENV", "1")
+            .env("HERDR_WORKTREE_HOOK", phase.name())
+            .env("HERDR_WORKTREE_PATH", context.path)
+            .env("HERDR_WORKTREE_REPO_ROOT", context.repo_root)
+            .env("HERDR_WORKTREE_SOURCE_PATH", context.source_path);
+        if let Some(branch) = context.branch {
+            command.env("HERDR_WORKTREE_BRANCH", branch);
+        }
+
+        match command.output() {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => {
+                let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let status = output
+                    .status
+                    .code()
+                    .map_or_else(|| "terminated".to_string(), |code| format!("exited {code}"));
+                failures.push(if detail.is_empty() {
+                    format!("{}: {program} {status}", phase.name())
+                } else {
+                    format!(
+                        "{}: {program} {status}: {}",
+                        phase.name(),
+                        concise_hook_output(&detail)
+                    )
+                });
+            }
+            Err(err) => failures.push(format!("{}: {program}: {err}", phase.name())),
+        }
+    }
+    failures
+}
+
+fn concise_hook_output(output: &str) -> String {
+    const MAX_CHARS: usize = 160;
+    let flattened = output.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flattened.chars().count() <= MAX_CHARS {
+        flattened
+    } else {
+        format!(
+            "{}...",
+            flattened.chars().take(MAX_CHARS).collect::<String>()
+        )
+    }
+}
+
 const DEFAULT_WORKTREE_PREFIX: &str = "worktree";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -524,6 +611,49 @@ fn worktree_list_contains_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn worktree_hooks_receive_context_and_report_failures_without_stopping() {
+        let root = unique_temp_path("worktree-hook");
+        std::fs::create_dir_all(&root).unwrap();
+        let output = root.join("hook-output");
+        let hooks = vec![
+            crate::config::WorktreeHookConfig {
+                command: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    format!(
+                        "printf '%s|%s' \"$HERDR_WORKTREE_HOOK\" \"$HERDR_WORKTREE_PATH\" > '{}'",
+                        output.display()
+                    ),
+                ],
+            },
+            crate::config::WorktreeHookConfig {
+                command: vec!["sh".into(), "-c".into(), "echo broken >&2; exit 7".into()],
+            },
+        ];
+
+        let failures = run_worktree_hooks(
+            &hooks,
+            WorktreeHookPhase::AfterCreate,
+            &root,
+            WorktreeHookContext {
+                path: &root,
+                repo_root: &root,
+                source_path: &root,
+                branch: Some("worktree/test"),
+            },
+        );
+
+        assert_eq!(
+            std::fs::read_to_string(output).unwrap(),
+            format!("after_create|{}", root.display())
+        );
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("exited 7: broken"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     fn unique_temp_path(name: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()

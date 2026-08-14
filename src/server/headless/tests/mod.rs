@@ -3748,6 +3748,7 @@ fn terminal_attach_client_exits_when_worktree_remove_succeeds() {
                 path: checkout,
                 workspace: None,
                 worktree: None,
+                hook_failures: Vec::new(),
                 forced: true,
                 api_request: Some(crate::events::ApiWorktreeRemoveRequest {
                     id: "req".into(),
