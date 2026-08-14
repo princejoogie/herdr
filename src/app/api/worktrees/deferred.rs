@@ -186,8 +186,22 @@ impl App {
         };
         let path = checkout_path;
         let source_checkout_path = api_request.source_checkout_path.clone();
+        let source_repo_root = api_request.source_repo_root.clone();
+        let hooks = self.state.worktree_hooks.clone();
         let event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
+            let context = || crate::worktree::WorktreeHookContext {
+                path: &path,
+                repo_root: &source_repo_root,
+                source_path: &source_checkout_path,
+                branch: Some(&branch),
+            };
+            let mut hook_failures = crate::worktree::run_worktree_hooks(
+                &hooks.before_create,
+                crate::worktree::WorktreeHookPhase::BeforeCreate,
+                &source_checkout_path,
+                context(),
+            );
             let result = if let Some(parent_dir) = parent_dir {
                 std::fs::create_dir_all(&parent_dir).map_err(|err| err.to_string())
             } else {
@@ -201,10 +215,19 @@ impl App {
                     &base,
                 )
             });
+            if result.is_ok() {
+                hook_failures.extend(crate::worktree::run_worktree_hooks(
+                    &hooks.after_create,
+                    crate::worktree::WorktreeHookPhase::AfterCreate,
+                    &path,
+                    context(),
+                ));
+            }
             let _ = event_tx.blocking_send(AppEvent::WorktreeAddFinished(Box::new(
                 crate::events::WorktreeAddResult {
                     path,
                     api_request: Some(api_request),
+                    hook_failures,
                     result,
                 },
             )));
@@ -320,12 +343,34 @@ impl App {
         };
         let repo_root = space.repo_root;
         let path = space.checkout_path;
+        let branch = worktree.branch.clone();
+        let hooks = self.state.worktree_hooks.clone();
         let force = params.force;
         let event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
+            let context = || crate::worktree::WorktreeHookContext {
+                path: &path,
+                repo_root: &repo_root,
+                source_path: &repo_root,
+                branch: branch.as_deref(),
+            };
+            let mut hook_failures = crate::worktree::run_worktree_hooks(
+                &hooks.before_remove,
+                crate::worktree::WorktreeHookPhase::BeforeRemove,
+                &path,
+                context(),
+            );
             let result = crate::worktree::run_worktree_remove_command_with_recovery(
                 &command, &repo_root, &path, force,
             );
+            if result.is_ok() {
+                hook_failures.extend(crate::worktree::run_worktree_hooks(
+                    &hooks.after_remove,
+                    crate::worktree::WorktreeHookPhase::AfterRemove,
+                    &repo_root,
+                    context(),
+                ));
+            }
             let _ = event_tx.blocking_send(AppEvent::WorktreeRemoveFinished(Box::new(
                 crate::events::WorktreeRemoveResult {
                     workspace_id: workspace_internal_id,
@@ -334,6 +379,7 @@ impl App {
                     worktree: Some(Box::new(worktree)),
                     forced: force,
                     api_request: Some(api_request),
+                    hook_failures,
                     result,
                 },
             )));

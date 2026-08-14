@@ -108,6 +108,17 @@ Grouped worktrees still behave like normal Herdr workspaces: they can be focused
 
 To delete a worktree checkout, use `Delete worktree checkout...` on a grouped child workspace. Herdr runs `git worktree remove`, first asking Git to remove safely. If Git refuses because the checkout has modified or untracked files, Herdr asks again before running the forced remove. Branches are not deleted.
 
+Run best-effort commands during worktree creation or removal with lifecycle hooks:
+
+```toml
+[[worktrees.hooks.after_create]]
+command = ["bash", "scripts/setup-worktree.sh"]
+```
+
+Available phases are `before_create`, `after_create`, `before_remove`, and `after_remove`. Commands are argv arrays and do not use a shell unless one is explicitly included. Create hooks run from the source checkout before creation and the new checkout afterward. Remove hooks run from the checkout before removal and the repository root afterward.
+
+Hooks receive `HERDR_WORKTREE_HOOK`, `HERDR_WORKTREE_PATH`, `HERDR_WORKTREE_REPO_ROOT`, `HERDR_WORKTREE_SOURCE_PATH`, and, when available, `HERDR_WORKTREE_BRANCH`. A missing command, non-zero exit, or other hook failure is logged and shown as a toast, but never fails or rolls back the worktree operation. Commands in the same phase run serially in declaration order.
+
 ## Remote attach
 
 Remote attach manages its SSH connection with temporary keepalives and, where supported, connection reuse by default.

@@ -498,6 +498,7 @@ impl App {
 
         let worktree_directory =
             crate::worktree::expand_tilde_absolute_path(&config.worktrees.directory);
+        let worktree_hooks = config.worktrees.hooks.clone();
 
         info!(
             pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes,
@@ -566,6 +567,7 @@ impl App {
             worktree_open: None,
             worktree_remove: None,
             worktree_directory,
+            worktree_hooks,
             collapsed_space_keys,
             request_complete_onboarding: false,
             name_input: String::new(),
@@ -1598,6 +1600,7 @@ impl App {
         if !invalid_section("worktrees") {
             self.state.worktree_directory =
                 crate::worktree::expand_tilde_absolute_path(&config.worktrees.directory);
+            self.state.worktree_hooks = config.worktrees.hooks.clone();
         }
 
         if !invalid_section("theme") {

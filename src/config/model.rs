@@ -830,11 +830,27 @@ pub struct IndexedKeysConfig {
     pub agents: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct WorktreesConfig {
     /// Root directory under which Herdr creates <repo>/<branch-slug> checkouts.
     pub directory: String,
+    pub hooks: WorktreeHooksConfig,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct WorktreeHooksConfig {
+    pub before_create: Vec<WorktreeHookConfig>,
+    pub after_create: Vec<WorktreeHookConfig>,
+    pub before_remove: Vec<WorktreeHookConfig>,
+    pub after_remove: Vec<WorktreeHookConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorktreeHookConfig {
+    /// Command argv. The first item is the executable; no shell is implied.
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
@@ -1094,6 +1110,7 @@ impl Default for WorktreesConfig {
     fn default() -> Self {
         Self {
             directory: "~/.herdr/worktrees".into(),
+            hooks: WorktreeHooksConfig::default(),
         }
     }
 }
@@ -1444,13 +1461,21 @@ tab_bar_right_separator = " · "
     fn worktrees_directory_defaults_and_parses() {
         let default_config = Config::default();
         assert_eq!(default_config.worktrees.directory, "~/.herdr/worktrees");
+        assert!(default_config.worktrees.hooks.after_create.is_empty());
 
         let toml = r#"
 [worktrees]
 directory = "~/Projects/herdr-worktrees"
+
+[[worktrees.hooks.after_create]]
+command = ["bash", "scripts/setup-worktree.sh"]
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.worktrees.directory, "~/Projects/herdr-worktrees");
+        assert_eq!(
+            config.worktrees.hooks.after_create[0].command,
+            ["bash", "scripts/setup-worktree.sh"]
+        );
     }
 
     #[test]

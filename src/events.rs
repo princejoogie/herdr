@@ -29,6 +29,7 @@ pub struct ApiWorktreeAddRequest {
 pub struct WorktreeAddResult {
     pub path: std::path::PathBuf,
     pub api_request: Option<ApiWorktreeAddRequest>,
+    pub hook_failures: Vec<String>,
     pub result: Result<(), String>,
 }
 
@@ -48,6 +49,7 @@ pub struct WorktreeRemoveResult {
     pub worktree: Option<Box<crate::api::schema::WorktreeInfo>>,
     pub forced: bool,
     pub api_request: Option<ApiWorktreeRemoveRequest>,
+    pub hook_failures: Vec<String>,
     pub result: Result<(), String>,
 }
 

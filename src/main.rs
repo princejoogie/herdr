@@ -260,6 +260,11 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 
 # [worktrees]
 # directory = "~/.herdr/worktrees"
+#
+# Worktree hooks are best-effort argv commands. Failures are shown as a toast
+# but never fail or roll back the worktree operation.
+# [[worktrees.hooks.after_create]]
+# command = ["bash", "scripts/setup-worktree.sh"]
 
 [ui]
 # Sidebar width (auto-scaled based on workspace names, this sets the default)

@@ -1181,6 +1181,7 @@ mod tests {
 
         app.handle_api_worktree_add_finished(WorktreeAddResult {
             path: checkout.clone(),
+            hook_failures: Vec::new(),
             api_request: Some(ApiWorktreeAddRequest {
                 id: "req".into(),
                 operation_id: 9,
@@ -2279,6 +2280,7 @@ mod tests {
             workspace: Some(Box::new(workspace_snapshot)),
             worktree: Some(Box::new(worktree_snapshot)),
             forced: true,
+            hook_failures: Vec::new(),
             api_request: Some(ApiWorktreeRemoveRequest {
                 id: "req".into(),
                 operation_id: 7,

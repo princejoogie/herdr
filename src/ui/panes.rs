@@ -414,8 +414,33 @@ pub(super) fn render_panes(
 
 pub(crate) fn popup_pane_rects(app: &AppState, area: Rect) -> Option<(Rect, Rect)> {
     let popup = app.popup_pane.as_ref()?;
-    resolve_popup_geometry(popup.width, popup.height, area)
-        .map(|geometry| (geometry.outer, geometry.inner))
+    let geometry = resolve_popup_geometry(popup.width, popup.height, area)?;
+    let center_area = if app.view.layout == crate::app::state::ViewLayout::Desktop
+        && app.view.sidebar_rect.width > 0
+    {
+        app.view.sidebar_rect.union(area)
+    } else {
+        area
+    };
+    let outer_x = center_area.x
+        + center_area
+            .width
+            .saturating_sub(geometry.outer.width)
+            .saturating_div(2);
+    let outer_y = geometry.outer.y;
+    let outer = Rect::new(
+        outer_x,
+        outer_y,
+        geometry.outer.width,
+        geometry.outer.height,
+    );
+    let inner = Rect::new(
+        outer_x.saturating_add(1),
+        outer_y.saturating_add(1),
+        geometry.inner.width,
+        geometry.inner.height,
+    );
+    Some((outer, inner))
 }
 
 pub(super) fn resize_popup_pane(
@@ -1017,6 +1042,25 @@ mod tests {
             &app.view.split_borders,
             frame,
         );
+    }
+
+    #[test]
+    fn popup_is_centered_across_sidebar_and_terminal_area() {
+        let mut app = AppState::test_new();
+        app.view.layout = crate::app::state::ViewLayout::Desktop;
+        app.view.sidebar_rect = Rect::new(0, 0, 26, 20);
+        app.view.terminal_area = Rect::new(26, 0, 80, 20);
+        app.popup_pane = Some(crate::app::state::PopupPaneState {
+            pane_id: PaneId::alloc(),
+            terminal_id: crate::terminal::TerminalId::alloc(),
+            width: None,
+            height: None,
+        });
+
+        let (outer, inner) = popup_pane_rects(&app, app.view.terminal_area).unwrap();
+
+        assert_eq!(outer, Rect::new(33, 5, 40, 10));
+        assert_eq!(inner, Rect::new(34, 6, 37, 8));
     }
 
     #[test]

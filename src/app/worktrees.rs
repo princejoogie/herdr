@@ -640,6 +640,7 @@ impl App {
                 WorktreeAddResult {
                     path,
                     api_request: None,
+                    hook_failures: Vec::new(),
                     result,
                 },
             )));
@@ -790,6 +791,7 @@ impl App {
                     worktree: worktree_snapshot,
                     forced: force,
                     api_request: None,
+                    hook_failures: Vec::new(),
                     result,
                 },
             )));
@@ -867,6 +869,7 @@ impl App {
     }
 
     pub(crate) fn handle_worktree_add_finished(&mut self, result: WorktreeAddResult) {
+        self.show_worktree_hook_failures(&result.hook_failures);
         if result.api_request.is_some() {
             self.handle_api_worktree_add_finished(result);
             return;
@@ -965,6 +968,7 @@ impl App {
         }
     }
     pub(crate) fn handle_worktree_remove_finished(&mut self, result: WorktreeRemoveResult) {
+        self.show_worktree_hook_failures(&result.hook_failures);
         if result.api_request.is_some() {
             self.handle_api_worktree_remove_finished(result);
             return;
@@ -1048,6 +1052,30 @@ impl App {
                 self.render_notify.notify_one();
             }
         }
+    }
+
+    fn show_worktree_hook_failures(&mut self, failures: &[String]) {
+        if failures.is_empty() {
+            return;
+        }
+        for failure in failures {
+            tracing::warn!(failure, "worktree hook failed");
+        }
+        let previous_toast = self.state.toast.clone();
+        let remaining = failures.len().saturating_sub(1);
+        let context = if remaining == 0 {
+            failures[0].clone()
+        } else {
+            format!("{} (+{remaining} more)", failures[0])
+        };
+        self.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::NeedsAttention,
+            title: "worktree hook failed".to_string(),
+            context,
+            position: None,
+            target: None,
+        });
+        self.sync_toast_deadline(previous_toast);
     }
 
     pub(crate) fn should_shutdown_workspace_terminal_runtimes_for_worktree_remove(
@@ -1939,6 +1967,7 @@ mod tests {
         app.handle_worktree_add_finished(WorktreeAddResult {
             path: checkout.clone(),
             api_request: None,
+            hook_failures: Vec::new(),
             result: Ok(()),
         });
 
@@ -2037,6 +2066,7 @@ mod tests {
         app.handle_worktree_add_finished(WorktreeAddResult {
             path: checkout.clone(),
             api_request: None,
+            hook_failures: Vec::new(),
             result: Ok(()),
         });
 
@@ -2356,6 +2386,7 @@ mod tests {
             worktree: None,
             forced: false,
             api_request: None,
+            hook_failures: Vec::new(),
             result: Err(
                 "fatal: '/w/herdr/dirty' contains modified or untracked files, use --force to delete it"
                     .into(),
@@ -2388,6 +2419,7 @@ mod tests {
             worktree: None,
             forced: false,
             api_request: None,
+            hook_failures: Vec::new(),
             result: Err("fatal: '/w/herdr/missing' is not a working tree".into()),
         });
 
@@ -2450,6 +2482,7 @@ mod tests {
             worktree: None,
             forced: false,
             api_request: None,
+            hook_failures: Vec::new(),
             result: Ok(()),
         });
 
@@ -2503,6 +2536,7 @@ mod tests {
             worktree: Some(Box::new(worktree_snapshot)),
             forced: true,
             api_request: None,
+            hook_failures: Vec::new(),
             result: Ok(()),
         });
 
