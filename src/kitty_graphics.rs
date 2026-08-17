@@ -230,7 +230,6 @@ fn encode_placement_update(
         cache.images.insert(host_id, image_signature);
     }
 
-    release_superseded_source_image(&mut bytes, cache, placement.source_key.clone(), host_id);
     if !displayed && !placement_current {
         encode_display_placement(
             &mut bytes,
@@ -240,6 +239,10 @@ fn encode_placement_update(
             placement.placement.z,
         );
     }
+    // Keep the previous image visible until its replacement has been uploaded
+    // and placed. Reversing this order exposes the pane background between
+    // streamed frames on terminals that do not replace image data atomically.
+    release_superseded_source_image(&mut bytes, cache, placement.source_key.clone(), host_id);
     cache.placements.insert(key, placement_signature);
     if cache.replay_placements {
         cache.replayed_placements.insert(key);
@@ -344,33 +347,38 @@ fn encode_graphics_update_incremental(
             || desired_sources.contains(source)
     });
 
-    let mut stale = cache
-        .placements
-        .keys()
-        .filter(|key| !desired_placements.contains(key))
-        .copied()
-        .collect::<Vec<_>>();
-    stale.sort_unstable();
-    let mut stale_image = None;
-    for key @ (host_id, placement_id) in stale {
-        let mut transaction = Vec::new();
-        encode_delete_placement(&mut transaction, host_id, placement_id);
-        let same_image = stale_image == Some(host_id);
-        if emitted
-            && !(coalesce_placements
-                && same_image
-                && coalesced_transaction_fits(bytes.len(), transaction.len(), transaction_budget))
-        {
-            return EncodedGraphics {
-                bytes,
-                incomplete: true,
-            };
+    if coalesce_placements {
+        let mut stale = cache
+            .placements
+            .keys()
+            .filter(|key| !desired_placements.contains(key))
+            .copied()
+            .collect::<Vec<_>>();
+        stale.sort_unstable();
+        let mut stale_image = None;
+        for key @ (host_id, placement_id) in stale {
+            let mut transaction = Vec::new();
+            encode_delete_placement(&mut transaction, host_id, placement_id);
+            let same_image = stale_image == Some(host_id);
+            if emitted
+                && !(same_image
+                    && coalesced_transaction_fits(
+                        bytes.len(),
+                        transaction.len(),
+                        transaction_budget,
+                    ))
+            {
+                return EncodedGraphics {
+                    bytes,
+                    incomplete: true,
+                };
+            }
+            bytes.extend(transaction);
+            cache.placements.remove(&key);
+            cache.replayed_placements.remove(&key);
+            emitted = true;
+            stale_image = Some(host_id);
         }
-        bytes.extend(transaction);
-        cache.placements.remove(&key);
-        cache.replayed_placements.remove(&key);
-        emitted = true;
-        stale_image = Some(host_id);
     }
 
     // Keep unrelated images isolated, but treat every row of one logical image
@@ -430,6 +438,31 @@ fn encode_graphics_update_incremental(
         emitted = true;
         if coalesce_pass && !pure_redisplay {
             coalesce_target = Some((placement.source_key.clone(), host_id));
+        }
+    }
+
+    if !coalesce_placements {
+        // Pane streams change host image IDs between frames. Install the
+        // replacement before deleting stale placements so the old frame stays
+        // visible until its successor is ready.
+        let mut stale = cache
+            .placements
+            .keys()
+            .filter(|key| !desired_placements.contains(key))
+            .copied()
+            .collect::<Vec<_>>();
+        stale.sort_unstable();
+        for key @ (host_id, placement_id) in stale {
+            if emitted {
+                return EncodedGraphics {
+                    bytes,
+                    incomplete: true,
+                };
+            }
+            encode_delete_placement(&mut bytes, host_id, placement_id);
+            cache.placements.remove(&key);
+            cache.replayed_placements.remove(&key);
+            emitted = true;
         }
     }
 

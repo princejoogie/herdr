@@ -164,19 +164,8 @@ impl ClientState {
         cell_size: HostCellSize,
     ) -> Vec<u8> {
         let mut bytes = self.take_pending_cleanup();
-        self.stale_images.sort_unstable();
-        self.stale_images.dedup();
-        for image_id in self.stale_images.drain(..) {
-            if self.host.images.remove(&image_id).is_some() {
-                super::encode_delete_image(&mut bytes, image_id);
-            }
-            self.host.placements.retain(|(id, _), _| *id != image_id);
-            self.host.sources.retain(|_, id| *id != image_id);
-            self.host
-                .replayed_placements
-                .retain(|(id, _)| *id != image_id);
-        }
         if !cell_size.is_known() || self.scope.is_empty() {
+            self.stale_images.clear();
             bytes.extend(self.host.clear_bytes());
             return bytes;
         }
@@ -208,9 +197,25 @@ impl ClientState {
             );
             bytes.extend(encoded.bytes);
             if !encoded.incomplete {
-                return bytes;
+                break;
             }
         }
+        // A new scene may replace a pane-stream frame with a different asset.
+        // Place that replacement above before retiring assets from the prior
+        // scene, otherwise terminals can expose the pane background briefly.
+        self.stale_images.sort_unstable();
+        self.stale_images.dedup();
+        for image_id in self.stale_images.drain(..) {
+            if self.host.images.remove(&image_id).is_some() {
+                super::encode_delete_image(&mut bytes, image_id);
+            }
+            self.host.placements.retain(|(id, _), _| *id != image_id);
+            self.host.sources.retain(|_, id| *id != image_id);
+            self.host
+                .replayed_placements
+                .retain(|(id, _)| *id != image_id);
+        }
+        bytes
     }
 }
 
@@ -725,6 +730,35 @@ mod tests {
         assert!(!second.contains("a=t,t=d"));
         assert!(second.contains("a=p"));
         assert!(second.contains("\u{1b}[8;12H"));
+    }
+
+    #[test]
+    fn replacement_scene_places_fresh_image_before_retiring_previous() {
+        let mut state = ClientState::default();
+        let scope = "endpoint-a:boot-1";
+        state.set_scope(scope);
+        let target = SurfaceGraphicsTarget::Pane {
+            pane_id: "w1:p1".into(),
+        };
+        let first = asset(target.clone(), 11, vec![1, 2, 3, 4]);
+        let first_id = host_image_id(scope, &first.key);
+        state.set_scene(scene(first, 0, 0));
+        let cell = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let _ = state.encode(Visibility::Main, (0, 0), None, cell);
+
+        let replacement = asset(target, 12, vec![4, 3, 2, 1]);
+        state.set_scene(scene(replacement, 0, 0));
+        let encoded = String::from_utf8(state.encode(Visibility::Main, (0, 0), None, cell))
+            .expect("graphics commands are utf-8");
+
+        let placement = encoded.find("a=p").expect("replacement placement command");
+        let deletion = encoded
+            .find(&format!("a=d,d=I,i={first_id}"))
+            .expect("superseded image delete command");
+        assert!(placement < deletion, "{encoded}");
     }
 
     #[test]

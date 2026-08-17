@@ -437,7 +437,17 @@ impl App {
                 "pane graphics inline memory limit reached",
             );
         }
-        let Some(host_image_id) = self.pane_graphics.reserve_image_id(&key) else {
+        let replacing_layer = self
+            .pane_graphics
+            .slots
+            .get(&key)
+            .is_some_and(|slot| slot.layer.is_some());
+        let host_image_id = if replacing_layer {
+            self.pane_graphics.reserve_fresh_image_id()
+        } else {
+            self.pane_graphics.reserve_image_id(&key)
+        };
+        let Some(host_image_id) = host_image_id else {
             return encode_error(id, "layer_limit", "pane graphics image ids are exhausted");
         };
         // Move the liveness handle out before replacing the slot so Slot::drop cannot
@@ -817,6 +827,29 @@ mod tests {
                 frame(pane_id.clone(), Some("chrome"), "owner", 3),
             ))
             .is_ok()
+        );
+        let first_image_id = app
+            .pane_graphics
+            .slots
+            .values()
+            .next()
+            .expect("stream frame installs a graphics slot")
+            .host_image_id;
+        assert!(
+            serde_json::from_str::<SuccessResponse>(&app.handle_pane_graphics_stream_set(
+                "next-frame".into(),
+                frame(pane_id.clone(), Some("chrome"), "owner", 4),
+            ))
+            .is_ok()
+        );
+        assert_ne!(
+            app.pane_graphics
+                .slots
+                .values()
+                .next()
+                .expect("replacement frame retains the graphics slot")
+                .host_image_id,
+            first_image_id,
         );
         app.handle_pane_graphics_stream_close("stale".into(), params("other"));
         assert_eq!(app.pane_graphics.slots.len(), 1);
