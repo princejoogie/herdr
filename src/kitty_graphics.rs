@@ -580,26 +580,6 @@ fn encode_graphics_update_incremental(
             || desired_sources.contains(source)
     });
 
-    let mut stale = cache
-        .placements
-        .keys()
-        .filter(|key| !desired_placements.contains(key))
-        .copied()
-        .collect::<Vec<_>>();
-    stale.sort_unstable();
-    for key @ (host_id, placement_id) in stale {
-        if emitted {
-            return EncodedGraphics {
-                bytes,
-                incomplete: true,
-            };
-        }
-        encode_delete_placement(&mut bytes, host_id, placement_id);
-        cache.placements.remove(&key);
-        cache.replayed_placements.remove(&key);
-        emitted = true;
-    }
-
     for offset in 0..placements.len() {
         let index = (start + offset) % placements.len();
         let placement = &placements[index];
@@ -637,6 +617,30 @@ fn encode_graphics_update_incremental(
         let (source, id) = placement_identity(placement);
         cache.continuation = Some((source, id, (index + 1) % placements.len()));
         bytes = transaction;
+        emitted = true;
+    }
+
+    // Install replacements before deleting stale placements. A pane stream
+    // changes host image IDs between frames so Kitty can keep the old frame
+    // visible during upload; deleting its placement first would emit a
+    // standalone blank transaction before the replacement transaction.
+    let mut stale = cache
+        .placements
+        .keys()
+        .filter(|key| !desired_placements.contains(key))
+        .copied()
+        .collect::<Vec<_>>();
+    stale.sort_unstable();
+    for key @ (host_id, placement_id) in stale {
+        if emitted {
+            return EncodedGraphics {
+                bytes,
+                incomplete: true,
+            };
+        }
+        encode_delete_placement(&mut bytes, host_id, placement_id);
+        cache.placements.remove(&key);
+        cache.replayed_placements.remove(&key);
         emitted = true;
     }
 
@@ -725,7 +729,6 @@ fn encode_placement_update(
         cache.images.insert(host_id, image_signature);
     }
 
-    release_superseded_source_image(&mut bytes, cache, placement.source_key.clone(), host_id);
     if !displayed && !placement_current {
         encode_display_placement(
             &mut bytes,
@@ -735,6 +738,10 @@ fn encode_placement_update(
             placement.placement.z,
         );
     }
+    // Keep the previous image visible until its replacement has been uploaded
+    // and placed. Reversing this order exposes the pane background between
+    // streamed frames on terminals that do not replace image data atomically.
+    release_superseded_source_image(&mut bytes, cache, placement.source_key.clone(), host_id);
     cache.placements.insert(key, placement_signature);
     if cache.replay_placements {
         cache.replayed_placements.insert(key);
@@ -2079,6 +2086,48 @@ mod tests {
         assert!(update.contains("a=T,t=d"));
         assert!(update.contains(",p=") && update.contains(",C=1,q=2"));
         assert!(!update.contains("a=d"));
+    }
+
+    #[test]
+    fn pane_layer_replacement_places_fresh_image_before_retiring_previous() {
+        let mut images = HashMap::new();
+        let mut placements = HashMap::new();
+        let mut sources = HashMap::new();
+        let mut bytes = Vec::new();
+        let mut first = pane_layer_placement(0, 0);
+        first.host_image_id = Some((1 << 31) | 7);
+        encode_graphics_update(
+            &mut bytes,
+            &[first],
+            false,
+            &mut images,
+            &mut placements,
+            &mut sources,
+        );
+
+        bytes.clear();
+        let mut changed = pane_layer_placement(0, 0);
+        changed.host_image_id = Some((1 << 31) | 8);
+        changed.placement.data_fingerprint += 1;
+        encode_graphics_update(
+            &mut bytes,
+            &[changed],
+            false,
+            &mut images,
+            &mut placements,
+            &mut sources,
+        );
+
+        let update = String::from_utf8_lossy(&bytes);
+        let placement = update.find("a=p").expect("replacement placement command");
+        let deletion = update
+            .find("a=d,d=I")
+            .expect("superseded image deletion command");
+        assert!(
+            placement < deletion,
+            "replacement is placed before the superseded image is deleted"
+        );
+        assert!(!update.contains("a=d,d=i"));
     }
 
     #[test]

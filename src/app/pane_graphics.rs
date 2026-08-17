@@ -109,6 +109,10 @@ impl Runtime {
         if let Some(id) = self.slots.get(key).map(|slot| slot.host_image_id) {
             return Some(id);
         }
+        self.reserve_fresh_image_id()
+    }
+
+    pub(crate) fn reserve_fresh_image_id(&mut self) -> Option<u32> {
         for _ in 0..=self.slots.len() {
             let id = self.next_host_image_id | (1 << 31);
             self.next_host_image_id = id.wrapping_add(1) | (1 << 31);
